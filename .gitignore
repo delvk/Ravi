@@ -38,3 +38,5 @@ test_output/
 test_output_1/
 
 output_keras/
+
+*.hdf5
