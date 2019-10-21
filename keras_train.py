@@ -34,7 +34,6 @@ def mse(y_true, y_pred):
 
 class KERAS_MCNN(object):
     def __init__(self, params):
-        self.name = params["model_name"]
         self.checkpoint_dir = params["checkpoint_dir"]
         self.log_dir = params["log_dir"]
         self.batch_size = params["batch_size"]
@@ -55,6 +54,7 @@ class KERAS_MCNN(object):
         self.valDataPath = params["valDataPath"]
         # private variables
         self._model = self._build()
+        self.name = "Keras_MCNN"
         # build model
 
     def _build(self):
@@ -160,14 +160,15 @@ class KERAS_MCNN(object):
             period=period,
         )
 
-        def check_and_load_model(file_path, model):
-            files = os.listdir(file_path)
+        def check_and_load_model(ckpt_dir, model):
+            files = os.listdir(ckpt_dir)
             if not files:
-                return False
+                return
             files.sort()
-            print("Load {}\n".format(files[-1]))
-            model = load_weights(files[-1])
-
+            ckpt_path = os.path.join(ckpt_dir, files[-1])
+            print("Load {}\n".format(ckpt_path))
+            model.load_weights(ckpt_path)
+        check_and_load_model(modeldir, model)
         training_history = model.fit(
             x_train,
             y_train,
