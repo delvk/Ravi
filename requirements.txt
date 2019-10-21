@@ -1,0 +1,9 @@
+numpy==1.16.4
+opencv-python
+tensorflow
+scipy
+argparse
+tqdm
+ConfigParser
+imgaug
+pandas
