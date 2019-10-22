@@ -40,3 +40,5 @@ test_output_1/
 output_keras/
 
 *.hdf5
+
+mcnn_org\.py

@@ -5,17 +5,16 @@ import keras.backend as K
 import datetime
 import pickle
 import time
+import tensorflow.compat.v1 as tf
 
 from keras.models import Sequential, Model
 from keras.layers import Dense, Dropout, Flatten, Input
 from keras.layers import Conv2D, MaxPooling2D, Reshape, Concatenate
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
-
-# from keras.models import load_model
 from random import shuffle
 from tqdm import tqdm
-import tensorflow.compat.v1 as tf
+
 from heatmap import *
 from utils import *
 
@@ -55,6 +54,8 @@ class KERAS_MCNN(object):
         # private variables
         self._model = self._build()
         self.name = "Keras_MCNN"
+        self.modeldir = os.path.join(self.checkpoint_dir, self.name)
+        makedirs(self.modeldir)
         # build model
 
     def _build(self):
@@ -119,12 +120,11 @@ class KERAS_MCNN(object):
             total_batch = 1
             batch_size = 1
             val_num = 1
-            self.end_epoch = 2
 
         def reshape_skip_batch(a):
             return np.reshape(a, [a.shape[0], a.shape[1], 1])
 
-        for i in range(val_num):
+        for i in tqdm(range(val_num)):
             d = val_data[i]
             x = normalized_bit_wised(d[0])
             y = downsized_4(d[1]) * scale
@@ -149,43 +149,27 @@ class KERAS_MCNN(object):
 
         best_mae = 10000
         print("Start training")
-        modeldir = os.path.join(self.checkpoint_dir, self.name)
-        makedirs(modeldir)
+        start_epoch = self._load_model(self.modeldir, model)
         period = 1
-        if not dev_test:
-            period = 10000
+        if dev_test:
+            self.end_epoch=start_epoch+1
+            period = self.end_epoch + 100
+
         mc = ModelCheckpoint(
-            os.path.join(modeldir, "weights.{epoch:02d}.hdf5"),
+            os.path.join(self.modeldir, "weights.{epoch:02d}.hdf5"),
             save_weights_only=False,
             period=period,
         )
 
-        def check_and_load_model(ckpt_dir, model):
-            files = os.listdir(ckpt_dir)
-            if not files:
-                return
-            files.sort()
-            ckpt_path = os.path.join(ckpt_dir, files[-1])
-            print("Load {}\n".format(ckpt_path))
-            model.load_weights(ckpt_path)
-        check_and_load_model(modeldir, model)
         training_history = model.fit(
             x_train,
             y_train,
+            initial_epoch=start_epoch,
             epochs=self.end_epoch,
             batch_size=1,
             callbacks=[mc]
             # validation_data=(x_val, y_val),
         )
-        # s = model.evaluate(x_val, y_val, batch_size=1)
-        # mae = s[1]
-        # if mae < best_mae:
-        #     best_mae = mae
-        #     # json_string = model.to_json()
-        #     print("best_mae: {}".format(best_mae))
-        #     # log_file.write(json_string)
-        #     if not dev_test:
-        #         model.save_weights("keras/weights_" + str(round(best_mae, 2)) + ".h5")
 
     def _writelog(self, log_str, log_file):
         print(log_str)
@@ -194,7 +178,7 @@ class KERAS_MCNN(object):
 
     def test(self):
         model = self._model
-        model.load_weights("weights.10.hdf5")
+        self._load_model(self.modeldir, model)
         val_lines = generate_data(self.valDataPath)
         val_data = pickle.load(open(val_lines[0], "rb"))
         # x_val = []
@@ -219,6 +203,25 @@ class KERAS_MCNN(object):
             y_pre = upsized_4(reshape_to_eval(y_pre))
             check_consistent(d[0], y_pre, save_file=save_path, base=base_path)
             print("{}, GT: {}, ET: {}".format(i, gt_count, et_count))
+
+    def _load_model(self, ckpt_dir, model, id=None):
+        """
+        If provide None, then the latest will be pick
+        """
+        files = os.listdir(ckpt_dir)
+        if not files:
+            return 0
+        files.sort()
+        ckpt_path = ""
+        if id is not None:
+            old_id = files[0].split(".")[1]
+            ckpt_path = os.path.join(ckpt_dir, files[0].replace(old_id, str(id)))
+        else:
+            ckpt_path = os.path.join(ckpt_dir, files[-1])
+            id = int(files[-1].split(".")[1])
+        print("Load {}\n".format(ckpt_path))
+        model.load_weights(ckpt_path)
+        return id
 
 
 if __name__ == "__main__":
