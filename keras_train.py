@@ -141,10 +141,10 @@ class KERAS_MCNN(object):
                 x_train.append(reshape_skip_batch(x))
                 y_train.append(reshape_skip_batch(y))
 
-        x_val = np.array(x_val)
-        y_val = np.array(y_val)
-        x_train = np.array(x_train)
-        y_train = np.array(y_train)
+        x_val = np.array(x_val, dtype = np.float32)
+        y_val = np.array(y_val, dtype = np.float32)
+        x_train = np.array(x_train, dtype = np.float32)
+        y_train = np.array(y_train, dtype = np.float32)
         d_time = round(time.time() - start_time)
 
         best_mae = 10000
@@ -176,11 +176,13 @@ class KERAS_MCNN(object):
         log_file.write(log_str)
         log_file.flush()
 
-    def test(self):
+    def test(self, test_with_cropped=False):
+        
         model = self._model
         self._load_model(self.modeldir, model)
         val_lines = generate_data(self.valDataPath)
         val_data = pickle.load(open(val_lines[0], "rb"))
+        val_mae = 0.0
         # x_val = []
         # y_val = []
         print("Pre-loading data, this will take long ...")
@@ -188,40 +190,84 @@ class KERAS_MCNN(object):
         outdir = "output_keras"
         base_dir = os.path.join(outdir, "base")
         makedirs(outdir, base_dir)
+        d_time = 0
         for i in range(val_num):
             d = val_data[i]
+            if test_with_cropped:
+                crop_x = crop_img(d[0])
+                crop_y = crop_img(d[1])
+                if len(crop_x) != len(crop_y):
+                    raise ValueError("wrong size")
+                sum_j = 0
+                for j in range(len(crop_x)):
+                    x_in = normalized_bit_wised(crop_x[j])
+                   
+                    y_pre = model.predict(reshape_to_feed(x_in))
+                    
+                    y_pre /= scale
+                    gt_count = np.sum(crop_y[j])
+                    et_count = np.sum(y_pre)
+                    # save_name = "{}_{}.png".format(i,j)
+                    # base_path = os.path.join(base_dir, save_name)
+                    # save_path = os.path.join(outdir, save_name)
+                    # SaveImage(crop_x[j], base_path)
+                    # y_pre = upsized_4(reshape_to_eval(y_pre))
+                    # check_consistent(crop_x[j], y_pre, save_file=save_path, base=base_path)
+                    sum_j+=et_count
+                print("From cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), sum_j))
+                
             x = normalized_bit_wised(d[0])
-            # y = downsized_4(d[1])
+            start_time = time.time()
             y_pre = model.predict(reshape_to_feed(x))
-            y_pre /= scale
-            gt_count = np.sum(d[1])
-            et_count = np.sum(y_pre)
-            save_name = "{}.png".format(i)
-            base_path = os.path.join(base_dir, save_name)
-            save_path = os.path.join(outdir, save_name)
+            d_time += time.time() - start_time
+            et_count = np.sum(y_pre) /scale
+            base_name = "{}.png".format(i)
+            act_save_name = "{}_act.png".format(i)
+            pre_save_name = "{}_pre.png".format(i)
+            
+            base_path = os.path.join(base_dir, base_name)
+            act_save_path = os.path.join(outdir, act_save_name)
+            pre_save_path = os.path.join(outdir, pre_save_name)
             SaveImage(d[0], base_path)
             y_pre = upsized_4(reshape_to_eval(y_pre))
-            check_consistent(d[0], y_pre, save_file=save_path, base=base_path)
-            print("{}, GT: {}, ET: {}".format(i, gt_count, et_count))
+            check_consistent(x, y_pre, save_file=pre_save_path, base=base_path)
+            check_consistent(x, d[1], save_file=act_save_path, base=base_path)
+            val_mae+=np.abs(np.sum(d[1])- et_count)
+            print("From NOT cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), et_count))
+            # if i == 0: 
+            #     break
+        val_mae /= val_num
+        print("MAE: {}".format(val_mae))
+        print(d_time)
+    def predict(self, img_path):
+        x_in = ReadImage(img_path, gray_scale=True)
+        x_in = reshape_to_feed(normalized_bit_wised(x_in))
+        # start_time = time.time()
+        y_pre = self._model.predict(x_in)
+        # end_time = time.time() - start_time
+        # print(end_time)
 
     def _load_model(self, ckpt_dir, model, id=None):
         """
         If provide None, then the latest will be pick
         """
         files = os.listdir(ckpt_dir)
+        id_list = []
         if not files:
             return 0
-        files.sort()
+        for f in files:
+            id_list.append(int(f.split(".")[1]))
+        id_list.sort()
+        print(id_list)
         ckpt_path = ""
+        old_id = files[0].split(".")[1]
         if id is not None:
-            old_id = files[0].split(".")[1]
             ckpt_path = os.path.join(ckpt_dir, files[0].replace(old_id, str(id)))
         else:
-            ckpt_path = os.path.join(ckpt_dir, files[-1])
-            id = int(files[-1].split(".")[1])
+            ckpt_path = os.path.join(ckpt_dir, files[0].replace(old_id, str(id_list[-1])))
         print("Load {}\n".format(ckpt_path))
         model.load_weights(ckpt_path)
-        return id
+        return id_list[-1]
 
 
 if __name__ == "__main__":
@@ -234,6 +280,8 @@ if __name__ == "__main__":
         model.test()
     elif phase == "train":
         model.train()
+    elif phase == "predict":
+        model.predict("raw/train_data/images/IMG_1.jpg")
     else:
         raise ValueError("DOnt knOw phAse")
     # model.train()
