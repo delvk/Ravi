@@ -289,7 +289,9 @@ def create_data(
 
 def prep_data_for_keras_train(phase):
     src_img_dir = "./raw/" + phase + "_data/images"
+    src_img_dir = src_img_dir.replace("_org","")
     src_gt_dir = "./raw/" + phase + "_data/dmap"
+    src_gt_dir = src_gt_dir.replace("_org","")
     des_img_dir = "./cooked/" + phase + "_data/images"
     des_gt_dir = "./cooked/" + phase + "_data/dmap"
 
@@ -299,29 +301,49 @@ def prep_data_for_keras_train(phase):
     replace = None
 
     if phase == "val":
-        batch_size = 116
+        batch_size = 29
         replace = "DMAP"
-    create_data(
-        src_img_dir,
-        src_gt_dir,
-        des_img_dir,
-        des_gt_dir,
-        patch_size,
-        patch_shape,
-        replace="DMAP",
-    )
+    elif phase == "train_org":
+        batch_size = 40
+        replace = "DMAP"
+    elif phase == "test":
+        batch_size = 20
+        replace = "DMAP"
+    elif phase == "train":
+        batch_size = 100
+        replace = None
+    else:
+        raise ValueError("Unknow phase")
     pickle_link = os.path.join("pickle", phase, phase + ".pkl")
-    lines = generate_data(
-        pickle_link,
-        batch_size=batch_size,
-        img_dir=des_img_dir,
-        gt_dir=des_gt_dir,
-        replace="DMAP",
-    )
+    if phase == "train":
+        create_data(
+            src_img_dir,
+            src_gt_dir,
+            des_img_dir,
+            des_gt_dir,
+            patch_size,
+            patch_shape,
+            replace="DMAP",
+        )
+        lines = generate_data(
+            pickle_link,
+            batch_size=batch_size,
+            img_dir=des_img_dir,
+            gt_dir=des_gt_dir,
+            replace=replace,
+        )
+    else:
+        lines = generate_data(
+            pickle_link,
+            batch_size=batch_size,
+            img_dir=src_img_dir,
+            gt_dir=src_gt_dir,
+            replace=replace,
+        )
     for i in range(len(lines)):
         l = lines[i]
         print("handle {}".format(l))
-        load_and_check(l, i, 2)
+        load_and_check(l, i, 1)
 
 
 def crop_img_from_path(img_path, chopsize=128):
@@ -348,15 +370,15 @@ def crop_img(img_data, chopsize=128):
     h, w = img_data.shape
     for x in range(0, w, chopsize):
         for y in range(0, h, chopsize):
-            x1= x + chopsize if x + chopsize < w else w - 1
+            x1 = x + chopsize if x + chopsize < w else w - 1
             y1 = y + chopsize if y + chopsize < h else h - 1
-            cropped_data = copy.deepcopy(
-                img_data[y : y1, x : x1]
-            )
+            cropped_data = copy.deepcopy(img_data[y:y1, x:x1])
             data.append(cropped_data)
     return data
+
+
 def crop_img_only(img_path, save_path):
-    j =1
+    j = 1
     rand_img = ReadImage(img_path, gray_scale=False)
     for k in range(16):
         if np.random.random() > 0.5:
@@ -373,12 +395,14 @@ def crop_img_only(img_path, save_path):
             rand_img[pos[1] : pos[1] + 128, pos[0] : pos[0] + 128, :]
         )
         id = str(j) + "_" + str(k)
-        SaveImage(img_norm, save_path=os.path.join(save_path,id+".png"))
-        
+        SaveImage(img_norm, save_path=os.path.join(save_path, id + ".png"))
+
+
 if __name__ == "__main__":
-    img_path = 'raw/train_data/images/IMG_1.jpg'
-    save_path ='temp'
-    crop_img_only(img_path, save_path)
+    # img_path = "raw/train_data/images/IMG_1.jpg"
+    # save_path = "temp"
+    # crop_img_only(img_path, save_path)
+    prep_data_for_keras_train("val")
     # crop_img(img_path)
 
     # variables_in_checkpoint = tf.train.list_variables('/home/jake/Desktop/Projects/Latex/LuanVan/demo/WORKINGON/checkpoint/continue')

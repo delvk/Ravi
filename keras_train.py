@@ -11,14 +11,19 @@ from keras.models import Sequential, Model
 from keras.layers import Dense, Dropout, Flatten, Input
 from keras.layers import Conv2D, MaxPooling2D, Reshape, Concatenate
 from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, Callback, CSVLogger
 from random import shuffle
 from tqdm import tqdm
 
 from heatmap import *
 from utils import *
+import copy
 
 scale = 1e3
+
+
+def reshape_skip_batch(a):
+    return np.reshape(a, [a.shape[0], a.shape[1], 1])
 
 
 def mae(y_true, y_pred):
@@ -29,6 +34,68 @@ def mae(y_true, y_pred):
 def mse(y_true, y_pred):
     a = (K.sum(y_true) - K.sum(y_pred)) / scale
     return a * a
+
+
+def create_patches_data(img_data, map_data, batch_x, batch_y):
+    # Load
+    width = 128
+    height = 128
+    # temp = [img_data, map_data]
+
+    for k in range(16):
+        if np.random.random() > 0.5:
+            rand_img = np.fliplr(img_data)
+            rand_map = np.fliplr(map_data)
+        else:
+            rand_img = img_data
+            rand_map = map_data
+
+        h, w = rand_img.shape
+        w_rand = randint(0, w - width)
+        h_rand = randint(0, h - height)
+        pos = np.array([w_rand, h_rand])
+        # crop
+        img_norm = copy.deepcopy(
+            rand_img[pos[1] : pos[1] + height, pos[0] : pos[0] + width]
+        )
+        map_temp = copy.deepcopy(
+            rand_map[pos[1] : pos[1] + height, pos[0] : pos[0] + width]
+        )
+        map_temp = downsized_4(map_temp)
+        x = normalized_bit_wised(img_norm)
+        y = map_temp * scale
+        batch_x.append(reshape_skip_batch(x))
+        batch_y.append(reshape_skip_batch(y))
+
+
+def generate_batches(file):
+    """
+    file: pkl files contain train_lines
+    """
+    lines = pickle.load(open(file, "rb"))
+    shuffle(lines)
+    # batch_y = []
+    counter = 0
+    while True:
+        fname = lines[counter]
+        # print("\n"+fname)
+        counter = (counter + 1) % len(lines)
+        data = pickle.load(open(fname, "rb"))
+        #  data = [img_data, dmap]
+        shuffle(data)
+        for d in data:
+            batch_x = []
+            batch_y = []
+            create_patches_data(d[0], d[1], batch_x, batch_y)
+            yield np.array(batch_x), np.array(batch_y)
+
+
+# model = Sequential()
+# model.compile(loss='binary_crossentropy', optimizer='rmsprop', metrics=['accuracy'])
+
+# train_files = [train_bundle_loc + "bundle_" + cb.__str__() for cb in range(nb_train_bundles)]
+# gen = generate_batches(files=train_files, batch_size=batch_size)
+# history = model.fit_generator(gen, samples_per_epoch=samples_per_epoch, nb_epoch=num_epoch,verbose=1, class_weight=class_weights)
 
 
 class KERAS_MCNN(object):
@@ -99,76 +166,80 @@ class KERAS_MCNN(object):
         model = self._model
         dev_test = self.dev_test
         # log file configuration
-        log_fname = self.name + "keras_log.json"
+        log_fname = self.name + "_training.log"
         makedirs(self.log_dir)
         log_fname = os.path.join(self.log_dir, log_fname)
         log_file = open(log_fname, "w")
-        # Configuration
+
         train_lines = generate_data(self.trainDataPath)
         val_lines = generate_data(self.valDataPath)
-        val_data = pickle.load(open(val_lines[0], "rb"))
-        start_time = time.time()
+
         x_train = []
         y_train = []
         x_val = []
         y_val = []
+
         print("Pre-loading data, this will take long ...")
-        total_batch = len(train_lines)
+        train_batch_num = len(train_lines)
         batch_size = 64
-        val_num = len(val_data)
+        val_batch_num = len(val_lines)
         if dev_test:
-            total_batch = 1
+            train_batch_num = 1
             batch_size = 1
-            val_num = 1
+            val_batch_num = 1
 
         def reshape_skip_batch(a):
             return np.reshape(a, [a.shape[0], a.shape[1], 1])
 
-        for i in tqdm(range(val_num)):
-            d = val_data[i]
-            x = normalized_bit_wised(d[0])
-            y = downsized_4(d[1]) * scale
-            x_val.append(reshape_skip_batch(x))
-            y_val.append(reshape_skip_batch(y))
-        for i in tqdm(range(total_batch)):
+        for i in tqdm(range(val_batch_num)):
+            l = val_lines[i]
+            val_data = pickle.load(open(l, "rb"))
+            for d in val_data:
+                x = normalized_bit_wised(d[0])
+                y = downsized_4(d[1]) * scale
+                x_val.append(reshape_skip_batch(x))
+                y_val.append(reshape_skip_batch(y))
+
+        for i in tqdm(range(train_batch_num)):
             l = train_lines[i]
             train_data = pickle.load(open(l, "rb"))
-            # shuffle(train_data)
             for d in train_data:
-                # TODO
                 x = normalized_bit_wised(d[0])
                 y = downsized_4(d[1]) * scale
                 x_train.append(reshape_skip_batch(x))
                 y_train.append(reshape_skip_batch(y))
 
-        x_val = np.array(x_val, dtype = np.float32)
-        y_val = np.array(y_val, dtype = np.float32)
-        x_train = np.array(x_train, dtype = np.float32)
-        y_train = np.array(y_train, dtype = np.float32)
-        d_time = round(time.time() - start_time)
+        x_val = np.array(x_val, dtype=np.float64)
+        y_val = np.array(y_val, dtype=np.float64)
+        x_train = np.array(x_train, dtype=np.float64)
+        y_train = np.array(y_train, dtype=np.float64)
 
         best_mae = 10000
         print("Start training")
         start_epoch = self._load_model(self.modeldir, model)
         period = 1
         if dev_test:
-            self.end_epoch=start_epoch+1
+            self.end_epoch = start_epoch + 1
             period = self.end_epoch + 100
-
         mc = ModelCheckpoint(
             os.path.join(self.modeldir, "weights.{epoch:02d}.hdf5"),
             save_weights_only=False,
+            save_best_only=True,
+            monitor="val_loss",
+            mode="min",
             period=period,
         )
-
+        # history = LossHistory(log_file)
+        csv_logger = CSVLogger('training.log')
         training_history = model.fit(
             x_train,
             y_train,
             initial_epoch=start_epoch,
             epochs=self.end_epoch,
             batch_size=1,
-            callbacks=[mc]
-            # validation_data=(x_val, y_val),
+            callbacks=[mc, csv_logger],
+            validation_data=(x_val, y_val),
+            shuffle=True,
         )
 
     def _writelog(self, log_str, log_file):
@@ -176,8 +247,8 @@ class KERAS_MCNN(object):
         log_file.write(log_str)
         log_file.flush()
 
-    def test(self, test_with_cropped=False):
-        
+    def test(self, test_with_cropped=False, save_result=False):
+
         model = self._model
         self._load_model(self.modeldir, model)
         val_lines = generate_data(self.valDataPath)
@@ -186,12 +257,12 @@ class KERAS_MCNN(object):
         # x_val = []
         # y_val = []
         print("Pre-loading data, this will take long ...")
-        val_num = len(val_data)
+        val_batch_num = len(val_data)
         outdir = "output_keras"
         base_dir = os.path.join(outdir, "base")
         makedirs(outdir, base_dir)
         d_time = 0
-        for i in range(val_num):
+        for i in range(val_batch_num):
             d = val_data[i]
             if test_with_cropped:
                 crop_x = crop_img(d[0])
@@ -201,9 +272,9 @@ class KERAS_MCNN(object):
                 sum_j = 0
                 for j in range(len(crop_x)):
                     x_in = normalized_bit_wised(crop_x[j])
-                   
+
                     y_pre = model.predict(reshape_to_feed(x_in))
-                    
+
                     y_pre /= scale
                     gt_count = np.sum(crop_y[j])
                     et_count = np.sum(y_pre)
@@ -213,32 +284,71 @@ class KERAS_MCNN(object):
                     # SaveImage(crop_x[j], base_path)
                     # y_pre = upsized_4(reshape_to_eval(y_pre))
                     # check_consistent(crop_x[j], y_pre, save_file=save_path, base=base_path)
-                    sum_j+=et_count
+                    sum_j += et_count
                 print("From cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), sum_j))
-                
+
             x = normalized_bit_wised(d[0])
             start_time = time.time()
             y_pre = model.predict(reshape_to_feed(x))
             d_time += time.time() - start_time
-            et_count = np.sum(y_pre) /scale
-            base_name = "{}.png".format(i)
-            act_save_name = "{}_act.png".format(i)
-            pre_save_name = "{}_pre.png".format(i)
-            
-            base_path = os.path.join(base_dir, base_name)
-            act_save_path = os.path.join(outdir, act_save_name)
-            pre_save_path = os.path.join(outdir, pre_save_name)
-            SaveImage(d[0], base_path)
-            y_pre = upsized_4(reshape_to_eval(y_pre))
-            check_consistent(x, y_pre, save_file=pre_save_path, base=base_path)
-            check_consistent(x, d[1], save_file=act_save_path, base=base_path)
-            val_mae+=np.abs(np.sum(d[1])- et_count)
-            print("From NOT cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), et_count))
-            # if i == 0: 
+            et_count = np.sum(y_pre) / scale
+
+            if save_result:
+                base_name = "{}.png".format(i)
+                act_save_name = "{}_act.png".format(i)
+                pre_save_name = "{}_pre.png".format(i)
+
+                base_path = os.path.join(base_dir, base_name)
+                act_save_path = os.path.join(outdir, act_save_name)
+                pre_save_path = os.path.join(outdir, pre_save_name)
+                SaveImage(d[0], base_path)
+                y_pre = upsized_4(reshape_to_eval(y_pre))
+                check_consistent(x, y_pre, save_file=pre_save_path, base=base_path)
+                check_consistent(x, d[1], save_file=act_save_path, base=base_path)
+            val_mae += np.abs(np.sum(d[1]) - et_count)
+            print(
+                "From NOT cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), et_count)
+            )
+            # if i == 0:
             #     break
-        val_mae /= val_num
+        val_mae /= val_batch_num
         print("MAE: {}".format(val_mae))
         print(d_time)
+
+    def test_from_dir(self, img_dir, gt_dir=None):
+        self._load_model(self.modeldir, self._model)
+        img_list = os.listdir(img_dir)
+        mae = 0.0
+        for name in img_list:
+            img_path = os.path.join(img_dir, name)
+
+            img_data = ReadImage(img_path, gray_scale=True)
+            img_data = normalized_bit_wised(img_data)
+            gt_data = None
+            gt_path = None
+            if gt_dir:
+                temp = name.replace("jpg", "csv")
+                gt_path = os.path.join(gt_dir, temp.replace("IMG", "DMAP"))
+                gt_data = ReadMap(gt_path)
+
+            predict = self._model.predict(reshape_to_feed(img_data))
+            et_count = np.sum(predict)
+            et_count /= scale
+
+            if gt_dir:
+                mae += np.abs(np.sum(gt_data) - et_count)
+                print(
+                    "{}, ground-truth: {}, predict: {}".format(
+                        name, np.sum(gt_data), et_count
+                    )
+                )
+            else:
+                print("{}, predict: {}".format(name, et_count))
+
+        if gt_dir:
+            mean_mae = np.divide(mae, len(img_list))
+            print("Mean mae: {}".format(mean_mae))
+
     def predict(self, img_path):
         x_in = ReadImage(img_path, gray_scale=True)
         x_in = reshape_to_feed(normalized_bit_wised(x_in))
@@ -264,10 +374,27 @@ class KERAS_MCNN(object):
         if id is not None:
             ckpt_path = os.path.join(ckpt_dir, files[0].replace(old_id, str(id)))
         else:
-            ckpt_path = os.path.join(ckpt_dir, files[0].replace(old_id, str(id_list[-1])))
+            ckpt_path = os.path.join(
+                ckpt_dir, files[0].replace(old_id, str(id_list[-1]))
+            )
         print("Load {}\n".format(ckpt_path))
         model.load_weights(ckpt_path)
         return id_list[-1]
+
+
+class LossHistory(Callback):
+    def __init__(self, log_file):
+        self.log_file = log_file
+
+    def on_train_begin(self, logs={}):
+        self.losses = []
+        self.val_losses = []
+
+    def on_batch_end(self, epoch, logs={}):
+        # self.losses.append(logs.get('loss'))
+        # self.val_losses.append(logs.get('val_loss'))
+        log_str = "{} - val_loss: {}\n".format(epoch, logs.get("val_loss"))
+        self.log_file.write(log_str)
 
 
 if __name__ == "__main__":
@@ -277,11 +404,13 @@ if __name__ == "__main__":
     phase = params[0]["phase"]
     model = KERAS_MCNN(params[0])
     if phase == "test":
-        model.test()
+        model.test_from_dir(params[0]["test_ImagePath"], params[0]["test_DmapPath"])
     elif phase == "train":
         model.train()
     elif phase == "predict":
         model.predict("raw/train_data/images/IMG_1.jpg")
+    elif phase == "val":
+        model.test()
     else:
         raise ValueError("DOnt knOw phAse")
     # model.train()
