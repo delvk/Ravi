@@ -9,7 +9,7 @@ from random import *
 import pickle
 import copy
 import tensorflow.compat.v1 as tf
-
+import cv2
 
 def makedirs(*paths):
     for path in paths:
@@ -194,12 +194,12 @@ def generate_data(save_path, batch_size=None, img_dir=None, gt_dir=None, replace
 
 
 def downsized_4(den):
-    den_quarter = np.zeros((int(den.shape[0] / 4), int(den.shape[1] / 4)))
-    for i in range(len(den_quarter)):
-        for j in range(len(den_quarter[0])):
-            for p in range(4):
-                for q in range(4):
-                    den_quarter[i][j] += den[i * 4 + p][j * 4 + q]
+    ht = den.shape[0]
+    wd = den.shape[1]
+    wd_down = int(wd/4)
+    ht_down = int(ht/4)
+    den_quarter = cv2.resize(den, (wd_down, ht_down))
+    den_quarter *= ((ht*wd)/(ht_down*wd_down))
     return den_quarter
 
 

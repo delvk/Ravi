@@ -19,7 +19,7 @@ from heatmap import *
 from utils import *
 import copy
 
-scale = 1e3
+scale = 100.0
 
 
 def reshape_skip_batch(a):
@@ -165,12 +165,7 @@ class KERAS_MCNN(object):
     def train(self):
         model = self._model
         dev_test = self.dev_test
-        # log file configuration
-        log_fname = self.name + "_training.log"
-        makedirs(self.log_dir)
-        log_fname = os.path.join(self.log_dir, log_fname)
-        log_file = open(log_fname, "w")
-
+        
         train_lines = generate_data(self.trainDataPath)
         val_lines = generate_data(self.valDataPath)
 
@@ -213,10 +208,16 @@ class KERAS_MCNN(object):
         y_val = np.array(y_val, dtype=np.float64)
         x_train = np.array(x_train, dtype=np.float64)
         y_train = np.array(y_train, dtype=np.float64)
-
-        best_mae = 10000
         print("Start training")
+        # log file configuration
         start_epoch = self._load_model(self.modeldir, model)
+        log_fname = self.name + "_training"+"_" + str(start_epoch) + ".log"
+        makedirs(self.log_dir)
+        log_fname = os.path.join(self.log_dir, log_fname)
+        if dev_test:
+            log_file = open("dev_test.log", "w+")
+        else:
+            log_file = open(log_fname, "w+")
         period = 1
         if dev_test:
             self.end_epoch = start_epoch + 1
@@ -224,13 +225,10 @@ class KERAS_MCNN(object):
         mc = ModelCheckpoint(
             os.path.join(self.modeldir, "weights.{epoch:02d}.hdf5"),
             save_weights_only=False,
-            save_best_only=True,
-            monitor="val_loss",
-            mode="min",
             period=period,
         )
         # history = LossHistory(log_file)
-        csv_logger = CSVLogger('training.log')
+        csv_logger = CSVLogger(log_fname)
         training_history = model.fit(
             x_train,
             y_train,
@@ -239,7 +237,6 @@ class KERAS_MCNN(object):
             batch_size=1,
             callbacks=[mc, csv_logger],
             validation_data=(x_val, y_val),
-            shuffle=True,
         )
 
     def _writelog(self, log_str, log_file):
@@ -250,7 +247,7 @@ class KERAS_MCNN(object):
     def test(self, test_with_cropped=False, save_result=False):
 
         model = self._model
-        self._load_model(self.modeldir, model)
+        self._load_model(self.modeldir, model, id=208)
         val_lines = generate_data(self.valDataPath)
         val_data = pickle.load(open(val_lines[0], "rb"))
         val_mae = 0.0
@@ -285,7 +282,7 @@ class KERAS_MCNN(object):
                     # y_pre = upsized_4(reshape_to_eval(y_pre))
                     # check_consistent(crop_x[j], y_pre, save_file=save_path, base=base_path)
                     sum_j += et_count
-                print("From cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), sum_j))
+                # print("From cropped: {}, GT: {}, ET: {}".format(i, np.sum(d[1]), sum_j))
 
             x = normalized_bit_wised(d[0])
             start_time = time.time()
@@ -410,7 +407,7 @@ if __name__ == "__main__":
     elif phase == "predict":
         model.predict("raw/train_data/images/IMG_1.jpg")
     elif phase == "val":
-        model.test()
+        model.test(save_result=True)
     else:
         raise ValueError("DOnt knOw phAse")
     # model.train()
