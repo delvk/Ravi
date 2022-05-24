@@ -1,6 +1,6 @@
 numpy==1.14.5
 opencv-python
-tensorflow==1.14.0
+tensorflow==2.6.4
 scipy
 argparse
 tqdm
